@@ -15,3 +15,15 @@ class StreamingServiceError(TouringMachineError):
 
 class PlaylistCreationError(StreamingServiceError):
     """Raised when playlist creation fails on the streaming provider."""
+
+
+class ProviderError(TouringMachineError):
+    """Raised when an external data provider operation fails."""
+
+
+class MissingApiKeyError(ProviderError):
+    """Raised when an API key is required but not provided."""
+
+
+class ArtistNotFoundError(ProviderError):
+    """Raised when an artist cannot be found on a concert provider."""
