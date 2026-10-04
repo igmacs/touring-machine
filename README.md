@@ -2,7 +2,7 @@
 
 Playlist generator for upcoming concerts.
 
-`touring-machine` automates generating playlists for upcoming concerts and tours. It is designed with a streaming-agnostic core architecture, supporting **Tidal** first, with upcoming support for Setlist.fm-driven track generation and other streaming providers (e.g. Spotify).
+`touring-machine` automates generating playlists for upcoming concerts and tours. It is designed with a streaming-agnostic core architecture, supporting **Tidal** as the primary streaming provider and **Setlist.fm** for concert data and setlist frequency analysis.
 
 ---
 
@@ -29,10 +29,10 @@ uv sync
 
 ---
 
-## Usage
+## Configuration & Usage
 
 ### 1. Check Service Status
-Inspect authentication status and session file locations:
+Inspect authentication status for streaming services and concert providers:
 
 ```bash
 uv run touring-machine status
@@ -51,11 +51,78 @@ To re-authenticate or switch accounts:
 uv run touring-machine login --force
 ```
 
-### 3. Create a Playlist
-Create an empty playlist on Tidal:
+### 3. Set your Setlist.fm API Key
+Obtain a free Setlist.fm API key at [setlist.fm/settings/api](https://www.setlist.fm/settings/api).
+
+Save it to configuration:
+```bash
+uv run touring-machine set-key setlistfm "YOUR_API_KEY"
+```
+Or export it as an environment variable:
+```bash
+export SETLISTFM_API_KEY="YOUR_API_KEY"
+```
+
+### 4. Generate Concert Playlists
+
+#### Most Played Songs Strategy (Default)
+Analyzes the artist's last $N$ concerts, counts song frequency, and generates a playlist sorted by most played:
 
 ```bash
-uv run touring-machine create-playlist "Radiohead Tour 2026" --description "Warmup playlist"
+# Generate playlist from last 5 shows (up to 25 songs)
+uv run touring-machine generate "Radiohead"
+
+# Analyze last 10 shows and limit to 20 songs
+uv run touring-machine generate "Fontaines D.C." --shows 10 --limit 20
+```
+
+#### Latest Show Strategy
+Replicates the exact setlist and performance order of the artist's most recent concert:
+
+```bash
+uv run touring-machine generate "The Smile" --strategy latest
+```
+
+#### Preview Without Creating (Dry Run)
+Inspect the resolved tracks and match confidence without creating a playlist on Tidal:
+
+```bash
+uv run touring-machine generate "Arctic Monkeys" --dry-run
+```
+
+### 5. Create an Empty Playlist Manually
+```bash
+uv run touring-machine create-playlist "My Custom Playlist" --description "Optional description"
+```
+
+---
+
+## Architecture Overview
+
+Touring Machine follows a modular, decoupled architecture:
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                      CLI / UI                          │
+│        (login, status, set-key, generate)              │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+┌──────────────────────────▼─────────────────────────────┐
+│                 PlaylistGenerator                      │
+│   Coordinates providers, strategies, and matchers      │
+└──────────────┬──────────────────────────┬──────────────┘
+               │                          │
+┌──────────────▼──────────┐    ┌──────────▼──────────────┐
+│    Streaming Provider   │    │    Concert Provider     │
+│  • TidalService         │    │  • SetlistFmProvider    │
+│  • Spotify (Future)     │    │  • Bandsintown (Future) │
+└──────────────┬──────────┘    └──────────┬──────────────┘
+               │                          │
+┌──────────────▼──────────┐    ┌──────────▼──────────────┐
+│      TrackMatcher       │    │    PlaylistStrategy     │
+│ • Fuzzy Title/Artist    │    │ • MostPlayedStrategy    │
+│ • Studio/Live Scoring   │    │ • LatestShowStrategy    │
+└─────────────────────────┘    └─────────────────────────┘
 ```
 
 ---
@@ -71,29 +138,4 @@ uv run pytest
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-```
-
----
-
-## Architecture Overview
-
-```text
-┌────────────────────────────────────────────────────────┐
-│                      CLI / UI                          │
-│     (touring_machine.cli: login, create-playlist, ...) │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-┌──────────────────────────▼─────────────────────────────┐
-│                     Core Engine                        │
-│   - Domain Models: Track, Playlist                     │
-│   - Service Factory: get_streaming_service             │
-└──────────────┬──────────────────────────┬──────────────┘
-               │                          │
-┌──────────────▼──────────┐    ┌──────────▼──────────────┐
-│     StreamingService    │    │    Concert Provider     │
-│        (Interface)      │    │     (Coming Soon)       │
-├─────────────────────────┤    ├─────────────────────────┤
-│ • TidalService (Active) │    │ • SetlistFmService      │
-│ • SpotifyService (Future│    │                         │
-└─────────────────────────┘    └─────────────────────────┘
 ```
