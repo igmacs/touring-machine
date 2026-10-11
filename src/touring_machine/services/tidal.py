@@ -161,7 +161,8 @@ class TidalService(StreamingService):
         try:
             results = self.session.search(query=search_str, models=[tidalapi.Track], limit=10)
             tracks: list[Track] = []
-            for item in getattr(results, "tracks", []):
+            # SearchResults is a TypedDict, so we access it like a dictionary
+            for item in results.get("tracks", []):
                 tracks.append(
                     Track(
                         id=str(item.id),
