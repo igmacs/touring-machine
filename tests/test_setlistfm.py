@@ -1,5 +1,6 @@
 """Unit tests for SetlistFmProvider."""
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import httpx
@@ -15,7 +16,10 @@ from touring_machine.models import Artist
 from touring_machine.providers.setlistfm import SetlistFmProvider
 
 
-def test_missing_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_api_key_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Point the config dir at an empty temp dir so a saved key on this machine
+    # doesn't mask the "no key anywhere" scenario
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("SETLISTFM_API_KEY", raising=False)
     provider = SetlistFmProvider(api_key=None)
     with pytest.raises(MissingApiKeyError, match="API key is missing"):
