@@ -1,6 +1,7 @@
 """Factory to instantiate playlist generation strategies."""
 
 from touring_machine.strategies.base import PlaylistStrategy
+from touring_machine.strategies.current_tour import CurrentTourStrategy
 from touring_machine.strategies.latest_show import LatestShowStrategy
 from touring_machine.strategies.most_played import MostPlayedStrategy
 
@@ -11,6 +12,9 @@ STRATEGY_MAP: dict[str, type[PlaylistStrategy]] = {
     "latest": LatestShowStrategy,
     "latest-show": LatestShowStrategy,
     "recent": LatestShowStrategy,
+    "current-tour": CurrentTourStrategy,
+    "current_tour": CurrentTourStrategy,
+    "average-setlist": CurrentTourStrategy,
 }
 
 
@@ -27,7 +31,7 @@ def get_strategy(name: str = "most-played", ignore_tapes: bool = True) -> Playli
     normalized = name.lower().strip()
     cls = STRATEGY_MAP.get(normalized)
     if not cls:
-        valid = ", ".join(f"'{k}'" for k in sorted({"most-played", "latest"}))
+        valid = ", ".join(f"'{k}'" for k in sorted({"most-played", "latest", "current-tour"}))
         msg = f"Unknown playlist strategy: '{name}'. Supported: {valid}"
         raise ValueError(msg)
 

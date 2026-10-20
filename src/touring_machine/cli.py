@@ -211,7 +211,7 @@ def generate_command(
         typer.Option(
             "--strategy",
             "-strat",
-            help="Playlist strategy: 'most-played' or 'latest'.",
+            help="Playlist strategy: 'most-played', 'latest', or 'current-tour'.",
         ),
     ] = "most-played",
     name: Annotated[
@@ -278,11 +278,7 @@ def generate_command(
 
     try:
         if dry_run:
-            setlists = provider.get_recent_setlists(artist, limit=shows)
-            if not setlists:
-                error_console.print(f"[bold red]No setlists found for '{artist}'.[/bold red]")
-                raise typer.Exit(code=1)
-
+            setlists = generator.fetch_setlists(artist, shows=shows, strategy_name=strategy_name)
             target_artist = setlists[0].artist
             song_titles = strategy.generate_tracklist(setlists, limit=limit)
             match_results = generator.matcher.match_songs(song_titles, target_artist.name)

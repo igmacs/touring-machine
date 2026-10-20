@@ -20,6 +20,15 @@ class PlaylistStrategy(ABC):
         """Human-readable description of what this strategy generates."""
         ...
 
+    @property
+    def scope(self) -> str:
+        """Which setlists the strategy needs fetched from the provider.
+
+        'recent': the artist's most recent shows (default).
+        'current-tour': all shows belonging to the artist's current tour.
+        """
+        return "recent"
+
     @abstractmethod
     def generate_tracklist(
         self,

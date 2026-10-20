@@ -27,3 +27,7 @@ class MissingApiKeyError(ProviderError):
 
 class ArtistNotFoundError(ProviderError):
     """Raised when an artist cannot be found on a concert provider."""
+
+
+class TourNotFoundError(ProviderError):
+    """Raised when no current tour can be determined for an artist."""

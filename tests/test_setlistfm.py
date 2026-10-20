@@ -9,6 +9,7 @@ from touring_machine.exceptions import (
     ArtistNotFoundError,
     MissingApiKeyError,
     ProviderError,
+    TourNotFoundError,
 )
 from touring_machine.models import Artist
 from touring_machine.providers.setlistfm import SetlistFmProvider
@@ -193,3 +194,122 @@ def test_get_recent_setlists_with_artist_object() -> None:
     assert len(setlists) == 1
     assert setlists[0].id == "setlist-2"
     assert setlists[0].songs[0].name == "Karma Police"
+
+
+def _json_response(payload: dict) -> MagicMock:
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.json.return_value = payload
+    return resp
+
+
+def _setlist_payload(setlist_id: str, tour: str | None = None) -> dict:
+    item = {
+        "id": setlist_id,
+        "eventDate": "10-10-2024",
+        "sets": {"set": [{"song": [{"name": "Karma Police"}]}]},
+    }
+    if tour:
+        item["tour"] = {"name": tour}
+    return {"setlist": [item], "itemsPerPage": 20, "total": 1}
+
+
+def test_get_recent_setlists_with_tour_name_filter() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_client.get.return_value = _json_response(_setlist_payload("setlist-tour"))
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client)
+    artist = Artist(name="Radiohead", mbid="radiohead-mbid")
+    setlists = provider.get_recent_setlists(artist, limit=1, tour_name="A Moon Shaped Pool Tour")
+
+    assert len(setlists) == 1
+    call_params = mock_client.get.call_args.kwargs["params"]
+    assert call_params["tourName"] == "A Moon Shaped Pool Tour"
+    assert call_params["artistMbid"] == "radiohead-mbid"
+
+
+def test_get_current_tour() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    recent = {
+        "setlist": [
+            {  # Most recent show is a festival one-off without a tour
+                "id": "festival",
+                "eventDate": "10-10-2024",
+                "sets": {"set": [{"song": [{"name": "Karma Police"}]}]},
+            },
+            {
+                "id": "tour-show",
+                "eventDate": "09-10-2024",
+                "tour": {"name": "A Moon Shaped Pool Tour"},
+                "sets": {"set": [{"song": [{"name": "Burn the Witch"}]}]},
+            },
+        ],
+        "itemsPerPage": 20,
+        "total": 2,
+    }
+    mock_client.get.return_value = _json_response(recent)
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client)
+    artist = Artist(name="Radiohead", mbid="radiohead-mbid")
+    tour = provider.get_current_tour(artist)
+
+    assert tour == "A Moon Shaped Pool Tour"
+
+
+def test_get_current_tour_none_when_no_tour() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_client.get.return_value = _json_response({"setlist": [], "itemsPerPage": 20, "total": 0})
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client)
+    artist = Artist(name="Radiohead", mbid="radiohead-mbid")
+    assert provider.get_current_tour(artist) is None
+
+
+def test_get_current_tour_setlists() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    artist_resp = _json_response({"artist": [{"mbid": "radiohead-mbid", "name": "Radiohead"}]})
+    recent_resp = _json_response(_setlist_payload("recent-show", tour="A Moon Shaped Pool Tour"))
+    tour_resp = _json_response(_setlist_payload("tour-show", tour="A Moon Shaped Pool Tour"))
+    mock_client.get.side_effect = [artist_resp, recent_resp, tour_resp]
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client)
+    setlists = provider.get_current_tour_setlists("Radiohead", limit=10)
+
+    assert len(setlists) == 1
+    assert setlists[0].id == "tour-show"
+    # Last request must filter by the detected tour name
+    last_call = mock_client.get.call_args_list[-1]
+    assert last_call.kwargs["params"]["tourName"] == "A Moon Shaped Pool Tour"
+
+
+def test_get_current_tour_setlists_no_tour_raises() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    artist_resp = _json_response({"artist": [{"mbid": "radiohead-mbid", "name": "Radiohead"}]})
+    recent_resp = _json_response({"setlist": [], "itemsPerPage": 20, "total": 0})
+    mock_client.get.side_effect = [artist_resp, recent_resp]
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client)
+    with pytest.raises(TourNotFoundError, match="No current tour found"):
+        provider.get_current_tour_setlists("Radiohead")
+
+
+def test_artist_resolution_prefers_exact_name_match() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    # Name-sorted search lists tribute entries before the real band
+    artist_resp = _json_response(
+        {
+            "artist": [
+                {"mbid": "tribute-mbid", "name": "The Best of Metallica"},
+                {"mbid": "real-mbid", "name": "Metallica"},
+            ]
+        }
+    )
+    setlist_resp = _json_response(_setlist_payload("setlist-1"))
+    mock_client.get.side_effect = [artist_resp, setlist_resp]
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client)
+    setlists = provider.get_recent_setlists("Metallica", limit=1)
+
+    assert len(setlists) == 1
+    call_params = mock_client.get.call_args_list[-1].kwargs["params"]
+    assert call_params["artistMbid"] == "real-mbid"

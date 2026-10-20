@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 
+from touring_machine.exceptions import ProviderError
 from touring_machine.models import Artist, ConcertSetlist
 
 
@@ -42,3 +43,16 @@ class ConcertDataProvider(ABC):
             List of ConcertSetlist domain objects in reverse chronological order.
         """
         ...
+
+    def get_current_tour_setlists(
+        self,
+        artist: str | Artist,
+        limit: int = 25,
+    ) -> list[ConcertSetlist]:
+        """Fetch setlists belonging to the artist's current (most recent) tour.
+
+        Optional capability: providers that cannot identify tours raise
+        ProviderError instead.
+        """
+        msg = f"Provider '{self.name}' does not support current-tour setlist fetching."
+        raise ProviderError(msg)

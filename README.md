@@ -83,6 +83,14 @@ Replicates the exact setlist and performance order of the artist's most recent c
 uv run touring-machine generate "The Smile" --strategy latest
 ```
 
+#### Current Tour Average Setlist Strategy
+Finds the artist's current tour (like the tour pages on Setlist.fm) and builds the tour's **average setlist**: songs ordered by the average position they occupy across the tour's shows, so the playlist resembles a typical concert of that tour. `--shows` controls how many shows of the tour are analyzed:
+
+```bash
+# Average setlist across up to 10 shows of the current tour
+uv run touring-machine generate "Fontaines D.C." --strategy current-tour --shows 10
+```
+
 #### Preview Without Creating (Dry Run)
 Inspect the resolved tracks and match confidence without creating a playlist on Tidal:
 
@@ -122,7 +130,8 @@ Touring Machine follows a modular, decoupled architecture:
 │      TrackMatcher       │    │    PlaylistStrategy     │
 │ • Fuzzy Title/Artist    │    │ • MostPlayedStrategy    │
 │ • Studio/Live Scoring   │    │ • LatestShowStrategy    │
-└─────────────────────────┘    └─────────────────────────┘
+└─────────────────────────┘    │ • CurrentTourStrategy   │
+                               └─────────────────────────┘
 ```
 
 ---

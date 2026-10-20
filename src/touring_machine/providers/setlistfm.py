@@ -10,6 +10,7 @@ from touring_machine.exceptions import (
     ArtistNotFoundError,
     MissingApiKeyError,
     ProviderError,
+    TourNotFoundError,
 )
 from touring_machine.models import Artist, ConcertSetlist, SongPerformance
 from touring_machine.providers.base import ConcertDataProvider
@@ -149,19 +150,43 @@ class SetlistFmProvider(ConcertDataProvider):
                 )
         return results
 
+    def _resolve_artist(self, query: str) -> Artist:
+        """Resolve a name query to the best-matching artist on Setlist.fm.
+
+        Name-sorted search can list tribute or compilation entries before the
+        real artist (e.g. 'The Best of Metallica' before 'Metallica'), so an
+        exact name match is preferred when present.
+        """
+        artists = self.search_artist(query)
+        if not artists:
+            msg = f"Artist '{query}' not found on Setlist.fm."
+            raise ArtistNotFoundError(msg)
+
+        cleaned = query.strip().lower()
+        for artist in artists:
+            if artist.name.strip().lower() == cleaned:
+                return artist
+        return artists[0]
+
     def get_recent_setlists(
         self,
         artist: str | Artist,
         limit: int = 5,
         only_with_songs: bool = True,
+        tour_name: str | None = None,
+        max_pages: int = 5,
     ) -> list[ConcertSetlist]:
-        """Fetch the most recent concert setlists for an artist."""
+        """Fetch the most recent concert setlists for an artist.
+
+        Args:
+            artist: Artist name or domain object.
+            limit: Maximum number of setlists to return.
+            only_with_songs: Skip setlists that contain no songs.
+            tour_name: Restrict results to a specific tour (Setlist.fm 'tourName' filter).
+            max_pages: Safety limit on how many result pages to fetch.
+        """
         if isinstance(artist, str):
-            artists = self.search_artist(artist)
-            if not artists:
-                msg = f"Artist '{artist}' not found on Setlist.fm."
-                raise ArtistNotFoundError(msg)
-            target_artist = artists[0]
+            target_artist = self._resolve_artist(artist)
         else:
             target_artist = artist
             if not target_artist.mbid:
@@ -175,13 +200,12 @@ class SetlistFmProvider(ConcertDataProvider):
 
         collected: list[ConcertSetlist] = []
         page = 1
-        max_pages = 5  # safety limit
 
         while len(collected) < limit and page <= max_pages:
-            data = self._request(
-                "/search/setlists",
-                params={"artistMbid": target_artist.mbid, "p": page},
-            )
+            params: dict[str, Any] = {"artistMbid": target_artist.mbid, "p": page}
+            if tour_name:
+                params["tourName"] = tour_name
+            data = self._request("/search/setlists", params=params)
             if not data:
                 break
 
@@ -209,6 +233,50 @@ class SetlistFmProvider(ConcertDataProvider):
             page += 1
 
         return collected[:limit]
+
+    def get_current_tour(self, artist: str | Artist, scan_limit: int = 5) -> str | None:
+        """Return the name of the artist's current (most recent) tour, if any.
+
+        Scans the most recent setlists and returns the tour name of the
+        newest show that belongs to a tour. Festival one-offs without a
+        tour are skipped.
+        """
+        recent = self.get_recent_setlists(artist, limit=scan_limit, only_with_songs=False)
+        for setlist in recent:
+            if setlist.tour_name:
+                return setlist.tour_name
+        return None
+
+    def get_current_tour_setlists(
+        self,
+        artist: str | Artist,
+        limit: int = 25,
+    ) -> list[ConcertSetlist]:
+        """Fetch setlists belonging to the artist's current tour.
+
+        Args:
+            artist: Artist name or domain object.
+            limit: Maximum number of tour setlists to return.
+
+        Raises:
+            TourNotFoundError: If the artist has no recent show assigned to a tour.
+        """
+        if isinstance(artist, str):
+            target_artist = self._resolve_artist(artist)
+        else:
+            target_artist = artist
+
+        tour_name = self.get_current_tour(target_artist)
+        if not tour_name:
+            msg = (
+                f"No current tour found for artist '{target_artist.name}'. "
+                "The artist's recent shows are not assigned to a tour on Setlist.fm."
+            )
+            raise TourNotFoundError(msg)
+
+        return self.get_recent_setlists(
+            target_artist, limit=limit, tour_name=tour_name, max_pages=15
+        )
 
     def _parse_setlist(self, item: dict[str, Any], artist: Artist) -> ConcertSetlist:
         """Parse raw Setlist.fm json dict into ConcertSetlist domain object."""

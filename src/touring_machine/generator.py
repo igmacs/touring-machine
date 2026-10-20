@@ -35,6 +35,37 @@ class PlaylistGenerator:
         self.provider = concert_provider
         self.matcher = matcher or TrackMatcher(streaming_service)
 
+    def fetch_setlists(
+        self,
+        artist_name: str,
+        shows: int = 5,
+        strategy_name: str = "most-played",
+    ) -> list[ConcertSetlist]:
+        """Fetch the setlists required by the requested strategy.
+
+        Strategies scoped to the current tour get all setlists belonging to the
+        artist's current tour; others get the artist's most recent shows.
+
+        Raises:
+            TouringMachineError: If no usable setlists are available.
+        """
+        strategy = get_strategy(strategy_name)
+        if strategy.scope == "current-tour":
+            setlists = self.provider.get_current_tour_setlists(artist_name, limit=shows)
+            if not setlists:
+                msg = (
+                    f"The current tour of artist '{artist_name}' has no setlists "
+                    "with songs yet on Setlist.fm."
+                )
+                raise TouringMachineError(msg)
+            return setlists
+
+        setlists = self.provider.get_recent_setlists(artist_name, limit=shows)
+        if not setlists:
+            msg = f"No recent concert setlists found for artist '{artist_name}'."
+            raise TouringMachineError(msg)
+        return setlists
+
     def generate(
         self,
         artist_name: str,
@@ -45,10 +76,7 @@ class PlaylistGenerator:
         description: str | None = None,
     ) -> GenerationResult:
         """Fetch setlists, resolve tracks, create and populate playlist on streaming platform."""
-        setlists = self.provider.get_recent_setlists(artist_name, limit=shows)
-        if not setlists:
-            msg = f"No recent concert setlists found for artist '{artist_name}'."
-            raise TouringMachineError(msg)
+        setlists = self.fetch_setlists(artist_name, shows=shows, strategy_name=strategy_name)
 
         target_artist = setlists[0].artist
 

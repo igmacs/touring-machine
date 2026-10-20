@@ -120,3 +120,67 @@ def test_generator_no_songs_raises(mock_streaming_service: MagicMock) -> None:
 
     with pytest.raises(TouringMachineError, match="No playable songs found"):
         generator.generate("Silent Band")
+
+
+def test_generator_tour_without_song_setlists_raises(mock_streaming_service: MagicMock) -> None:
+    provider = MagicMock()
+    provider.get_current_tour_setlists.return_value = []
+
+    generator = PlaylistGenerator(
+        streaming_service=mock_streaming_service,
+        concert_provider=provider,
+    )
+
+    with pytest.raises(TouringMachineError, match="no setlists with songs yet"):
+        generator.generate("Radiohead", strategy_name="current-tour")
+
+
+def test_generator_fetches_current_tour_setlists_for_tour_strategy(
+    mock_streaming_service: MagicMock,
+) -> None:
+    provider = MagicMock()
+    artist = Artist(name="Radiohead", mbid="radiohead-mbid")
+    provider.get_current_tour_setlists.return_value = [
+        ConcertSetlist(
+            id="t1",
+            event_date="2024-08-01",
+            artist=artist,
+            tour_name="A Moon Shaped Pool Tour",
+            songs=[SongPerformance(name="Burn the Witch")],
+        )
+    ]
+
+    generator = PlaylistGenerator(
+        streaming_service=mock_streaming_service,
+        concert_provider=provider,
+    )
+
+    generator.generate("Radiohead", strategy_name="current-tour", shows=10)
+
+    provider.get_current_tour_setlists.assert_called_once_with("Radiohead", limit=10)
+    provider.get_recent_setlists.assert_not_called()
+
+
+def test_generator_fetches_recent_setlists_for_default_strategy(
+    mock_streaming_service: MagicMock,
+) -> None:
+    provider = MagicMock()
+    artist = Artist(name="Radiohead", mbid="radiohead-mbid")
+    provider.get_recent_setlists.return_value = [
+        ConcertSetlist(
+            id="c1",
+            event_date="2024-08-01",
+            artist=artist,
+            songs=[SongPerformance(name="Burn the Witch")],
+        )
+    ]
+
+    generator = PlaylistGenerator(
+        streaming_service=mock_streaming_service,
+        concert_provider=provider,
+    )
+
+    generator.generate("Radiohead", strategy_name="most-played", shows=3)
+
+    provider.get_recent_setlists.assert_called_once_with("Radiohead", limit=3)
+    provider.get_current_tour_setlists.assert_not_called()
