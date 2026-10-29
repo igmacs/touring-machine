@@ -143,6 +143,16 @@ def create_playlist_command(
         str,
         typer.Option("--description", "-d", help="Description for the new playlist."),
     ] = "",
+    folder: Annotated[
+        str | None,
+        typer.Option(
+            "--folder",
+            help=(
+                "Place the playlist inside this Tidal playlist folder "
+                "(created if missing; top-level folders only)."
+            ),
+        ),
+    ] = None,
     service_name: Annotated[
         str,
         typer.Option(
@@ -169,7 +179,7 @@ def create_playlist_command(
 
     with console.status(f"[cyan]Creating playlist '{name}' on {service_title}...[/cyan]"):
         try:
-            playlist = service.create_playlist(name=name, description=description)
+            playlist = service.create_playlist(name=name, description=description, folder=folder)
         except AuthenticationError as exc:
             error_console.print(f"[bold red]Authentication error:[/bold red] {exc}")
             raise typer.Exit(code=1) from exc
@@ -223,6 +233,16 @@ def generate_command(
     description: Annotated[
         str | None,
         typer.Option("--description", "-d", help="Custom playlist description."),
+    ] = None,
+    folder: Annotated[
+        str | None,
+        typer.Option(
+            "--folder",
+            help=(
+                "Place the playlist inside this Tidal playlist folder "
+                "(created if missing; top-level folders only)."
+            ),
+        ),
     ] = None,
     service_name: Annotated[
         str,
@@ -295,6 +315,7 @@ def generate_command(
                 strategy_name=strategy_name,
                 playlist_name=name,
                 description=description,
+                playlist_folder=folder,
             )
     except TouringMachineError as exc:
         error_console.print(f"[bold red]Generation error:[/bold red] {exc}")

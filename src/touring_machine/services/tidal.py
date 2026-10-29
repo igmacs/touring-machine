@@ -11,11 +11,14 @@ from touring_machine.exceptions import (
     AuthenticationError,
     PlaylistCreationError,
     StreamingServiceError,
+    TouringMachineError,
 )
 from touring_machine.models import Playlist, Track
 from touring_machine.services.base import StreamingService
 
 logger = logging.getLogger(__name__)
+
+_FOLDER_PAGE_SIZE = 50
 
 
 class TidalService(StreamingService):
@@ -100,12 +103,16 @@ class TidalService(StreamingService):
         except OSError:
             pass
 
-    def create_playlist(self, name: str, description: str = "") -> Playlist:
-        """Create a new playlist in Tidal.
+    def create_playlist(
+        self, name: str, description: str = "", folder: str | None = None
+    ) -> Playlist:
+        """Create a new playlist in Tidal, optionally inside a playlist folder.
 
         Args:
             name: Playlist title.
             description: Optional playlist description.
+            folder: Optional playlist folder name. The folder is created if
+                it does not exist yet. Tidal only supports top-level folders.
 
         Returns:
             The created Playlist domain object.
@@ -120,7 +127,11 @@ class TidalService(StreamingService):
             raise AuthenticationError("No authenticated Tidal user found in session.")
 
         try:
-            user_playlist = user.create_playlist(title=name, description=description)
+            parent_id = self._resolve_folder(user, folder) if folder else None
+            create_kwargs: dict = {"title": name, "description": description}
+            if parent_id is not None:
+                create_kwargs["parent_id"] = parent_id
+            user_playlist = user.create_playlist(**create_kwargs)
             url = getattr(user_playlist, "share_url", None) or getattr(
                 user_playlist, "listen_url", None
             )
@@ -130,8 +141,69 @@ class TidalService(StreamingService):
                 description=user_playlist.description,
                 url=url,
             )
+        except TouringMachineError:
+            raise
         except Exception as exc:
             raise PlaylistCreationError(f"Failed to create playlist on Tidal: {exc}") from exc
+
+    def _resolve_folder(self, user: "tidalapi.User", folder_name: str) -> str:
+        """Resolve a playlist folder name to a Tidal folder ID.
+
+        Reuses the existing folder with the given name, or creates it if
+        missing. Tidal only supports top-level folders with playlists inside.
+
+        Args:
+            user: The authenticated Tidal user.
+            folder_name: Playlist folder name, e.g. '2026 Tours'.
+
+        Returns:
+            The ID of the folder.
+
+        Raises:
+            PlaylistCreationError: If the folder cannot be resolved or created.
+        """
+        name = folder_name.strip()
+        if not name:
+            msg = "Playlist folder name cannot be empty."
+            raise PlaylistCreationError(msg)
+        if "/" in name:
+            msg = (
+                "Tidal only supports top-level playlist folders; "
+                f"nested folder paths are not supported: '{folder_name}'"
+            )
+            raise PlaylistCreationError(msg)
+        try:
+            folder = self._find_folder(user, name, "root")
+            if folder is None:
+                folder = user.create_folder(title=name, parent_id="root")
+            folder_id = getattr(folder, "id", None)
+            if not folder_id:
+                msg = f"Tidal folder '{name}' has no ID."
+                raise PlaylistCreationError(msg)
+            return str(folder_id)
+        except TouringMachineError:
+            raise
+        except Exception as exc:
+            msg = f"Failed to resolve Tidal folder '{folder_name}': {exc}"
+            raise PlaylistCreationError(msg) from exc
+
+    @staticmethod
+    def _find_folder(user: "tidalapi.User", name: str, parent_id: str) -> object | None:
+        """Return the existing folder with the given name under parent_id, or None."""
+        favorites = user.favorites
+        offset = 0
+        while True:
+            page = favorites.playlist_folders(
+                limit=_FOLDER_PAGE_SIZE, offset=offset, parent_folder_id=parent_id
+            )
+            if not page:
+                return None
+            for folder in page:
+                if folder.name == name:
+                    return folder
+            if len(page) < _FOLDER_PAGE_SIZE:
+                return None
+            offset += len(page)
 
     def add_tracks(self, playlist_id: str, tracks: list[Track]) -> None:
         """Add tracks to an existing playlist (prepared for future iterations)."""

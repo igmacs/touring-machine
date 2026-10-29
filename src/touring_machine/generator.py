@@ -74,6 +74,7 @@ class PlaylistGenerator:
         strategy_name: str = "most-played",
         playlist_name: str | None = None,
         description: str | None = None,
+        playlist_folder: str | None = None,
     ) -> GenerationResult:
         """Fetch setlists, resolve tracks, create and populate playlist on streaming platform."""
         setlists = self.fetch_setlists(artist_name, shows=shows, strategy_name=strategy_name)
@@ -100,7 +101,7 @@ class PlaylistGenerator:
         )
 
         # Create playlist
-        playlist = self.service.create_playlist(name=name, description=desc)
+        playlist = self.service.create_playlist(name=name, description=desc, folder=playlist_folder)
 
         # Populate playlist with tracks
         if matched_tracks:

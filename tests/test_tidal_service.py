@@ -125,6 +125,85 @@ def test_create_playlist_wraps_exception(tmp_path: Path) -> None:
         service.create_playlist("Failing Playlist")
 
 
+def test_create_playlist_with_folder_reuses_existing_folder(tmp_path: Path) -> None:
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+
+    existing_folder = MagicMock()
+    existing_folder.id = "folder-1"
+    existing_folder.name = "2026 Tours"
+    mock_user = MagicMock()
+    mock_user.favorites.playlist_folders.return_value = [existing_folder]
+    mock_user_playlist = MagicMock()
+    mock_user_playlist.id = "pl-1"
+    mock_user_playlist.name = "My Pl"
+    mock_user_playlist.description = ""
+    mock_user_playlist.share_url = "https://tidal.com/playlist/pl-1"
+    mock_user.create_playlist.return_value = mock_user_playlist
+    mock_session.user = mock_user
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    service.create_playlist("My Pl", folder="2026 Tours")
+
+    mock_user.create_folder.assert_not_called()
+    mock_user.create_playlist.assert_called_once_with(
+        title="My Pl", description="", parent_id="folder-1"
+    )
+
+
+def test_create_playlist_with_folder_creates_missing_folder(tmp_path: Path) -> None:
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+
+    new_folder = MagicMock()
+    new_folder.id = "folder-new"
+    new_folder.name = "2026 Tours"
+    mock_user = MagicMock()
+    mock_user.favorites.playlist_folders.return_value = []
+    mock_user.create_folder.return_value = new_folder
+    mock_user_playlist = MagicMock()
+    mock_user_playlist.id = "pl-1"
+    mock_user_playlist.name = "My Pl"
+    mock_user_playlist.description = ""
+    mock_user_playlist.share_url = "https://tidal.com/playlist/pl-1"
+    mock_user.create_playlist.return_value = mock_user_playlist
+    mock_session.user = mock_user
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    service.create_playlist("My Pl", folder="2026 Tours")
+
+    mock_user.create_folder.assert_called_once_with(title="2026 Tours", parent_id="root")
+    mock_user.create_playlist.assert_called_once_with(
+        title="My Pl", description="", parent_id="folder-new"
+    )
+
+
+def test_create_playlist_rejects_nested_folder_path(tmp_path: Path) -> None:
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+    mock_user = MagicMock()
+    mock_session.user = mock_user
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    with pytest.raises(PlaylistCreationError, match="top-level playlist folders"):
+        service.create_playlist("My Pl", folder="2026 Tours/Radiohead")
+    mock_user.create_playlist.assert_not_called()
+    mock_user.create_folder.assert_not_called()
+
+
+def test_create_playlist_with_folder_wraps_exception(tmp_path: Path) -> None:
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+    mock_user = MagicMock()
+    mock_user.favorites.playlist_folders.side_effect = RuntimeError("Network error")
+    mock_session.user = mock_user
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    with pytest.raises(PlaylistCreationError, match="Failed to resolve Tidal folder"):
+        service.create_playlist("My Pl", folder="2026 Tours")
+    mock_user.create_playlist.assert_not_called()
+
+
 def test_add_tracks_success(tmp_path: Path) -> None:
     mock_session = MagicMock()
     mock_session.check_login.return_value = True

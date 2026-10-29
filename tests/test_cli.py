@@ -134,7 +134,25 @@ def test_create_playlist_success() -> None:
         assert "pl-test-123" in result.stdout
         assert "https://tidal.com/playlist/pl-test-123" in result.stdout
         mock_service.create_playlist.assert_called_once_with(
-            name="Tour Playlist", description="Upcoming show"
+            name="Tour Playlist", description="Upcoming show", folder=None
+        )
+
+
+def test_create_playlist_with_folder() -> None:
+    mock_service = MagicMock()
+    mock_service.name = "tidal"
+    mock_service.is_authenticated.return_value = True
+    mock_service.create_playlist.return_value = Playlist(
+        id="pl-test-123",
+        name="Tour Playlist",
+    )
+
+    with patch("touring_machine.cli.get_streaming_service", return_value=mock_service):
+        result = runner.invoke(app, ["create-playlist", "Tour Playlist", "--folder", "2026 Tours"])
+        assert result.exit_code == 0
+        assert "Playlist Created Successfully" in result.stdout
+        mock_service.create_playlist.assert_called_once_with(
+            name="Tour Playlist", description="", folder="2026 Tours"
         )
 
 
@@ -265,3 +283,21 @@ def test_generate_success() -> None:
         assert "Concert Playlist Generated Successfully" in result.stdout
         assert "Radiohead - Concert Setlist" in result.stdout
         assert "Tracks Added: 1 / 1" in result.stdout
+
+
+def test_generate_with_folder() -> None:
+    mock_service = MagicMock()
+    mock_service.name = "tidal"
+    mock_service.is_authenticated.return_value = True
+
+    mock_provider = MagicMock()
+    mock_provider.api_key = "test-key"
+
+    with (
+        patch("touring_machine.cli.get_streaming_service", return_value=mock_service),
+        patch("touring_machine.cli.SetlistFmProvider", return_value=mock_provider),
+        patch("touring_machine.cli.PlaylistGenerator.generate") as mock_generate,
+    ):
+        result = runner.invoke(app, ["generate", "Radiohead", "--folder", "2026 Tours"])
+        assert result.exit_code == 0
+        assert mock_generate.call_args.kwargs["playlist_folder"] == "2026 Tours"

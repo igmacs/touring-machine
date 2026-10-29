@@ -74,6 +74,12 @@ uv run touring-machine generate "Radiohead"
 
 # Analyze last 10 shows and limit to 20 songs
 uv run touring-machine generate "Fontaines D.C." --shows 10 --limit 20
+
+# Custom playlist title and description
+uv run touring-machine generate "Fontaines D.C." --name "Fontaines D.C. Live 2026" --description "Average setlist"
+
+# Place the playlist inside a Tidal folder (folder is created if missing)
+uv run touring-machine generate "Radiohead" --folder "2026 Tours"
 ```
 
 #### Latest Show Strategy
@@ -101,6 +107,79 @@ uv run touring-machine generate "Arctic Monkeys" --dry-run
 ### 5. Create an Empty Playlist Manually
 ```bash
 uv run touring-machine create-playlist "My Custom Playlist" --description "Optional description"
+```
+
+---
+
+## Command Reference
+
+### `generate`
+
+Generate a concert playlist from recent setlists on Setlist.fm.
+
+```bash
+uv run touring-machine generate [OPTIONS] ARTIST
+```
+
+| Option | Short | Default | Description |
+|---|---|---|---|
+| `artist` | | (required) | Name of the artist or band. |
+| `--shows` | `-n` | `5` | Number of recent shows to analyze. With `current-tour`, how many shows of the tour are analyzed. |
+| `--limit` | `-l` | `25` | Maximum songs to include in the playlist. |
+| `--strategy` | `-strat` | `most-played` | Playlist strategy: `most-played`, `latest`, or `current-tour` (aliases such as `latest-show`, `recent`, `average-setlist` are also accepted). |
+| `--name` | | `<Artist> - Tour Setlist` | Custom playlist title. |
+| `--description` | `-d` | | Custom playlist description. |
+| `--folder` | | | Tidal playlist folder to place the playlist in (created if missing). Tidal only supports top-level folders, so nesting is not available. |
+| `--service` | `-s` | `tidal` | Target streaming service. |
+| `--dry-run` | | off | Preview setlists and song matches without creating the playlist. |
+
+### `create-playlist`
+
+Create a new empty playlist on the chosen streaming platform.
+
+```bash
+uv run touring-machine create-playlist [OPTIONS] NAME
+```
+
+| Option | Short | Default | Description |
+|---|---|---|---|
+| `name` | | (required) | Name of the playlist to create. |
+| `--description` | `-d` | (empty) | Description for the new playlist. |
+| `--folder` | | | Tidal playlist folder to place the playlist in (created if missing). Tidal only supports top-level folders, so nesting is not available. |
+| `--service` | `-s` | `tidal` | Streaming service provider. |
+
+### `login`
+
+Log in to a streaming service using OAuth.
+
+```bash
+uv run touring-machine login [OPTIONS]
+```
+
+| Option | Short | Default | Description |
+|---|---|---|---|
+| `--service` | `-s` | `tidal` | Streaming service to authenticate with. |
+| `--force` | `-f` | off | Force re-authentication even if already logged in. |
+
+### `set-key`
+
+Save an API key to the touring-machine configuration file.
+
+```bash
+uv run touring-machine set-key PROVIDER API_KEY
+```
+
+| Argument | Description |
+|---|---|
+| `provider` | Provider to set key for (e.g. `setlistfm`). |
+| `api_key` | The API key token. |
+
+### `status`
+
+Check authentication and configuration status for supported services. Takes no options.
+
+```bash
+uv run touring-machine status
 ```
 
 ---

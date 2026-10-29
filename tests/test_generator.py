@@ -93,6 +93,20 @@ def test_generator_success(
     mock_streaming_service.add_tracks.assert_called_once()
 
 
+def test_generator_passes_folder_to_playlist_creation(
+    mock_streaming_service: MagicMock, mock_concert_provider: MagicMock
+) -> None:
+    generator = PlaylistGenerator(
+        streaming_service=mock_streaming_service,
+        concert_provider=mock_concert_provider,
+    )
+
+    generator.generate(artist_name="Radiohead", playlist_folder="2026 Tours")
+
+    create_kwargs = mock_streaming_service.create_playlist.call_args.kwargs
+    assert create_kwargs["folder"] == "2026 Tours"
+
+
 def test_generator_no_setlists_raises(mock_streaming_service: MagicMock) -> None:
     provider = MagicMock()
     provider.get_recent_setlists.return_value = []

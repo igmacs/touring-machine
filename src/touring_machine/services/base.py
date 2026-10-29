@@ -32,12 +32,16 @@ class StreamingService(ABC):
         ...
 
     @abstractmethod
-    def create_playlist(self, name: str, description: str = "") -> Playlist:
+    def create_playlist(
+        self, name: str, description: str = "", folder: str | None = None
+    ) -> Playlist:
         """Create a new playlist in the user's account.
 
         Args:
             name: Playlist name.
             description: Optional playlist description.
+            folder: Optional folder name to place the playlist in.
+                Missing folders are created automatically.
 
         Returns:
             The created Playlist domain object.
