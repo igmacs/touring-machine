@@ -297,6 +297,51 @@ def test_get_current_tour_setlists_no_tour_raises() -> None:
         provider.get_current_tour_setlists("Radiohead")
 
 
+def test_get_client_creates_and_reuses_single_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_client_cls = MagicMock()
+    monkeypatch.setattr("touring_machine.providers.setlistfm.httpx.Client", mock_client_cls)
+
+    provider = SetlistFmProvider(api_key="test-key")
+    first = provider._get_client()
+    second = provider._get_client()
+
+    assert first is second
+    mock_client_cls.assert_called_once()
+
+
+def test_injected_client_is_not_closed_by_provider() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client)
+    provider.close()
+    mock_client.close.assert_not_called()
+
+
+def test_requests_are_throttled(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [1000.0]
+    slept: list[float] = []
+    monkeypatch.setattr("touring_machine.providers.setlistfm.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("touring_machine.providers.setlistfm.time.sleep", slept.append)
+
+    mock_client = MagicMock(spec=httpx.Client)
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.json.return_value = {"artist": []}
+    mock_client.get.return_value = resp
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client, request_interval=0.6)
+    provider.search_artist("A")
+    assert slept == []  # first request is never delayed
+
+    now[0] += 0.1
+    provider.search_artist("B")
+    assert len(slept) == 1
+    assert slept[0] == pytest.approx(0.5, abs=0.01)
+
+    now[0] += 0.7
+    provider.search_artist("C")
+    assert len(slept) == 1  # enough time elapsed, no extra sleep
+
+
 def test_artist_resolution_prefers_exact_name_match() -> None:
     mock_client = MagicMock(spec=httpx.Client)
     # Name-sorted search lists tribute entries before the real band

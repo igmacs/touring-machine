@@ -1,6 +1,7 @@
 """Setlist.fm concert data provider implementation."""
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -18,6 +19,10 @@ from touring_machine.providers.base import ConcertDataProvider
 logger = logging.getLogger(__name__)
 
 SETLISTFM_BASE_URL = "https://api.setlist.fm/rest/1.0"
+
+# Setlist.fm's origin allows 2 requests/second with no burst allowance, so
+# requests must be spaced out; stay safely below the limit.
+MIN_REQUEST_INTERVAL = 0.6
 
 
 def _format_event_date(date_str: str) -> str:
@@ -38,15 +43,20 @@ class SetlistFmProvider(ConcertDataProvider):
         self,
         api_key: str | None = None,
         client: httpx.Client | None = None,
+        request_interval: float = MIN_REQUEST_INTERVAL,
     ) -> None:
         """Initialize Setlist.fm provider.
 
         Args:
             api_key: Setlist.fm API key (defaults to config or SETLISTFM_API_KEY env var).
             client: Optional pre-configured httpx.Client (useful for testing/mocking).
+            request_interval: Minimum seconds between API requests (rate limiting).
         """
         self._api_key = api_key
         self._client = client
+        self._owns_client = client is None
+        self._request_interval = request_interval
+        self._last_request_at = 0.0
 
     @property
     def name(self) -> str:
@@ -68,18 +78,32 @@ class SetlistFmProvider(ConcertDataProvider):
         return self._api_key
 
     def _get_client(self) -> httpx.Client:
-        """Return or create HTTP client."""
-        if self._client is not None:
-            return self._client
-        return httpx.Client(
-            base_url=SETLISTFM_BASE_URL,
-            headers={
-                "Accept": "application/json",
-                "x-api-key": self.api_key,
-                "User-Agent": "TouringMachine/0.1.0",
-            },
-            timeout=15.0,
-        )
+        """Return the shared HTTP client, creating and caching it on first use."""
+        if self._client is None:
+            self._client = httpx.Client(
+                base_url=SETLISTFM_BASE_URL,
+                headers={
+                    "Accept": "application/json",
+                    "x-api-key": self.api_key,
+                    "User-Agent": "TouringMachine/0.1.0",
+                },
+                timeout=15.0,
+            )
+            self._owns_client = True
+        return self._client
+
+    def close(self) -> None:
+        """Close the underlying HTTP client if this provider created it."""
+        if self._client is not None and self._owns_client:
+            self._client.close()
+        self._client = None
+
+    def _throttle(self) -> None:
+        """Sleep if needed so requests stay at least request_interval seconds apart."""
+        wait = self._last_request_at + self._request_interval - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._last_request_at = time.monotonic()
 
     def _request(
         self, endpoint: str, params: dict[str, Any] | None = None
@@ -99,6 +123,7 @@ class SetlistFmProvider(ConcertDataProvider):
             if endpoint.startswith("/")
             else f"{SETLISTFM_BASE_URL}/{endpoint}"
         )
+        self._throttle()
         try:
             response = client.get(url, params=params, headers=headers)
         except Exception as exc:
