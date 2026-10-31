@@ -1,6 +1,7 @@
 """Tidal streaming service implementation using tidalapi."""
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -44,6 +45,7 @@ class TidalService(StreamingService):
         self.session = session or tidalapi.Session()
         self._session_loaded = False
         self._authenticated = False
+        self._auth_lock = threading.Lock()
         self._search_cache: dict[str, list[Track]] = {}
 
     @property
@@ -57,26 +59,32 @@ class TidalService(StreamingService):
         tidalapi's check_login() performs a network request, so calling it
         before every search would roughly double the API traffic of a run.
         Failures are not cached, so a later call can still succeed.
+
+        The check is guarded by a lock because match_songs() calls this
+        concurrently from a thread pool; without it, threads arriving while
+        the session file is being loaded would see _session_loaded set but
+        _authenticated unset and wrongly report "not authenticated".
         """
-        if self._authenticated:
-            return True
+        with self._auth_lock:
+            if self._authenticated:
+                return True
 
-        if self.session.check_login():
-            self._authenticated = True
-            return True
+            if self.session.check_login():
+                self._authenticated = True
+                return True
 
-        if not self._session_loaded and self.session_path.exists():
-            self._session_loaded = True
-            try:
-                self.session.load_session_from_file(self.session_path)
-                if self.session.check_login():
-                    self._authenticated = True
-                    return True
-            except Exception as e:
-                logger.debug("Failed to load session from file %s: %s", self.session_path, e)
-                return False
+            if not self._session_loaded and self.session_path.exists():
+                self._session_loaded = True
+                try:
+                    self.session.load_session_from_file(self.session_path)
+                    if self.session.check_login():
+                        self._authenticated = True
+                        return True
+                except Exception as e:
+                    logger.debug("Failed to load session from file %s: %s", self.session_path, e)
+                    return False
 
-        return False
+            return False
 
     def authenticate(
         self,

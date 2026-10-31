@@ -1,5 +1,7 @@
 """Unit tests for TidalService."""
 
+import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -84,6 +86,36 @@ def test_search_track_checks_auth_once_across_searches(tmp_path: Path) -> None:
 
     mock_session.check_login.assert_called_once()
     assert mock_session.search.call_count == 2
+
+
+def test_is_authenticated_is_thread_safe_under_concurrent_calls(tmp_path: Path) -> None:
+    # Regression test: match_songs() calls is_authenticated() from a thread
+    # pool; concurrent callers must all see the loaded session, not a mix of
+    # True/False while the first caller is still loading the session file.
+    session_file = tmp_path / "session.json"
+    session_file.write_text('{"token": "dummy"}')
+
+    mock_session = MagicMock()
+    mock_session.check_login.side_effect = [False] + [True] * 20
+
+    def slow_load(_path: Path) -> None:
+        time.sleep(0.05)  # widen the race window
+
+    mock_session.load_session_from_file.side_effect = slow_load
+
+    service = TidalService(session_path=session_file, session=mock_session)
+    results: list[bool] = []
+    threads = [
+        threading.Thread(target=lambda: results.append(service.is_authenticated()))
+        for _ in range(8)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert results and all(results)
+    assert mock_session.load_session_from_file.call_count == 1
 
 
 def test_search_track_retries_on_429_with_backoff_when_no_retry_after(
