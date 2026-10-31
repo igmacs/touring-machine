@@ -24,6 +24,9 @@ SETLISTFM_BASE_URL = "https://api.setlist.fm/rest/1.0"
 # requests must be spaced out; stay safely below the limit.
 MIN_REQUEST_INTERVAL = 0.6
 
+# How many times to retry a request that was rate limited (HTTP 429).
+MAX_RETRIES_429 = 3
+
 
 def _format_event_date(date_str: str) -> str:
     """Format Setlist.fm 'dd-MM-yyyy' date to ISO 'YYYY-MM-DD'."""
@@ -105,11 +108,23 @@ class SetlistFmProvider(ConcertDataProvider):
             time.sleep(wait)
         self._last_request_at = time.monotonic()
 
+    @staticmethod
+    def _retry_delay(response: httpx.Response, attempt: int) -> float:
+        """Seconds to wait before retrying a 429, honoring Retry-After if present."""
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                pass  # HTTP-date form; fall back to backoff
+        return min(2.0**attempt, 30.0)
+
     def _request(
         self, endpoint: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         """Perform an HTTP GET request to Setlist.fm.
 
+        Rate-limited requests (HTTP 429) are retried with backoff.
         Returns None if a 404 is encountered (Setlist.fm returns 404 for empty search results).
         """
         client = self._get_client()
@@ -123,12 +138,26 @@ class SetlistFmProvider(ConcertDataProvider):
             if endpoint.startswith("/")
             else f"{SETLISTFM_BASE_URL}/{endpoint}"
         )
-        self._throttle()
-        try:
-            response = client.get(url, params=params, headers=headers)
-        except Exception as exc:
-            msg = f"Failed to connect to Setlist.fm: {exc}"
-            raise ProviderError(msg) from exc
+        response: httpx.Response | None = None
+        for attempt in range(MAX_RETRIES_429 + 1):
+            self._throttle()
+            try:
+                response = client.get(url, params=params, headers=headers)
+            except Exception as exc:
+                msg = f"Failed to connect to Setlist.fm: {exc}"
+                raise ProviderError(msg) from exc
+            if response.status_code == 429 and attempt < MAX_RETRIES_429:
+                delay = self._retry_delay(response, attempt)
+                logger.warning(
+                    "Setlist.fm rate limited (HTTP 429), retrying in %.1fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    MAX_RETRIES_429,
+                )
+                time.sleep(delay)
+                continue
+            break
+        assert response is not None
 
         if response.status_code == 404:
             return None

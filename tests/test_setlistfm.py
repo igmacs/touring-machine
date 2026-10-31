@@ -342,6 +342,45 @@ def test_requests_are_throttled(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(slept) == 1  # enough time elapsed, no extra sleep
 
 
+def test_request_retries_on_429_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr("touring_machine.providers.setlistfm.time.sleep", slept.append)
+
+    mock_client = MagicMock(spec=httpx.Client)
+    resp_429 = MagicMock(spec=httpx.Response)
+    resp_429.status_code = 429
+    resp_429.headers = {}
+    resp_200 = MagicMock(spec=httpx.Response)
+    resp_200.status_code = 200
+    resp_200.json.return_value = {"artist": []}
+    mock_client.get.side_effect = [resp_429, resp_200]
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client, request_interval=0.0)
+    assert provider.search_artist("Radiohead") == []
+
+    assert mock_client.get.call_count == 2
+    assert slept == [1.0]  # exponential backoff for the first attempt
+
+
+def test_request_429_honors_retry_after_and_gives_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr("touring_machine.providers.setlistfm.time.sleep", slept.append)
+
+    mock_client = MagicMock(spec=httpx.Client)
+    resp_429 = MagicMock(spec=httpx.Response)
+    resp_429.status_code = 429
+    resp_429.headers = {"Retry-After": "5"}
+    resp_429.text = '{"message":"Too Many Requests"}'
+    mock_client.get.return_value = resp_429
+
+    provider = SetlistFmProvider(api_key="test-key", client=mock_client, request_interval=0.0)
+    with pytest.raises(ProviderError, match="HTTP 429"):
+        provider.search_artist("Radiohead")
+
+    assert mock_client.get.call_count == 4  # 1 initial + 3 retries
+    assert slept == [5.0, 5.0, 5.0]  # Retry-After wins over backoff
+
+
 def test_artist_resolution_prefers_exact_name_match() -> None:
     mock_client = MagicMock(spec=httpx.Client)
     # Name-sorted search lists tribute entries before the real band
