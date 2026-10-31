@@ -45,6 +45,42 @@ def test_is_authenticated_loads_existing_session_file(tmp_path: Path) -> None:
     mock_session.load_session_from_file.assert_called_once_with(session_file)
 
 
+def test_is_authenticated_caches_successful_check(tmp_path: Path) -> None:
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    assert service.is_authenticated()
+    assert service.is_authenticated()
+    assert service.is_authenticated()
+
+    # check_login() hits the network in tidalapi; it must run only once per run
+    mock_session.check_login.assert_called_once()
+
+
+def test_is_authenticated_does_not_cache_failure(tmp_path: Path) -> None:
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = False
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    assert not service.is_authenticated()
+    assert not service.is_authenticated()
+    assert mock_session.check_login.call_count == 2
+
+
+def test_search_track_checks_auth_once_across_searches(tmp_path: Path) -> None:
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+    mock_session.search.return_value = {"tracks": []}
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    service.search_track("Song A", "Artist")
+    service.search_track("Song B", "Artist")
+
+    mock_session.check_login.assert_called_once()
+    assert mock_session.search.call_count == 2
+
+
 def test_authenticate_non_interactive_returns_false_when_unauthenticated(tmp_path: Path) -> None:
     mock_session = MagicMock()
     mock_session.check_login.return_value = False

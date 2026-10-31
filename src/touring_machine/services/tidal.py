@@ -38,21 +38,34 @@ class TidalService(StreamingService):
         self.session_path = session_path or get_default_tidal_session_path()
         self.session = session or tidalapi.Session()
         self._session_loaded = False
+        self._authenticated = False
 
     @property
     def name(self) -> str:
         return "tidal"
 
     def is_authenticated(self) -> bool:
-        """Check if currently authenticated or if a valid stored session can be loaded."""
+        """Check if currently authenticated or if a valid stored session can be loaded.
+
+        A successful check is cached for the lifetime of this instance:
+        tidalapi's check_login() performs a network request, so calling it
+        before every search would roughly double the API traffic of a run.
+        Failures are not cached, so a later call can still succeed.
+        """
+        if self._authenticated:
+            return True
+
         if self.session.check_login():
+            self._authenticated = True
             return True
 
         if not self._session_loaded and self.session_path.exists():
             self._session_loaded = True
             try:
                 self.session.load_session_from_file(self.session_path)
-                return self.session.check_login()
+                if self.session.check_login():
+                    self._authenticated = True
+                    return True
             except Exception as e:
                 logger.debug("Failed to load session from file %s: %s", self.session_path, e)
                 return False
@@ -90,6 +103,7 @@ class TidalService(StreamingService):
                 return False
 
             self._save_session()
+            self._authenticated = True
             return True
         except Exception as exc:
             raise AuthenticationError(f"Tidal authentication failed: {exc}") from exc
