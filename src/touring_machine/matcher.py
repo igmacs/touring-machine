@@ -1,12 +1,20 @@
 """Track matching and resolution between concert setlists and streaming services."""
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 
 from rapidfuzz import fuzz
 
 from touring_machine.models import Track
 from touring_machine.services.base import StreamingService
+
+# Tidal's edge (CloudFront) starts returning 429s at roughly 30 req/s sustained
+# (measured empirically; no documented limit). At ~0.4s per search, 8 workers
+# run at ~16-20 req/s, safely below that. Higher counts gain little because the
+# origin latency grows under concurrency anyway.
+DEFAULT_MAX_WORKERS = 8
 
 
 def normalize_title(title: str) -> str:
@@ -39,15 +47,22 @@ class MatchResult:
 class TrackMatcher:
     """Resolves setlist song titles to streaming service catalog tracks."""
 
-    def __init__(self, service: StreamingService, min_score: float = 70.0) -> None:
+    def __init__(
+        self,
+        service: StreamingService,
+        min_score: float = 70.0,
+        max_workers: int = DEFAULT_MAX_WORKERS,
+    ) -> None:
         """Initialize matcher.
 
         Args:
             service: Authenticated streaming service provider.
             min_score: Minimum match confidence score (0-100) to accept a candidate.
+            max_workers: Max concurrent catalog searches (searches are network-bound).
         """
         self.service = service
         self.min_score = min_score
+        self.max_workers = max_workers
 
     def match_song(self, song_name: str, artist_name: str) -> MatchResult:
         """Search and find the best matching track for a given song and artist."""
@@ -107,8 +122,13 @@ class TrackMatcher:
         )
 
     def match_songs(self, song_names: list[str], artist_name: str) -> list[MatchResult]:
-        """Batch match a list of song names for an artist."""
-        results: list[MatchResult] = []
-        for song in song_names:
-            results.append(self.match_song(song, artist_name))
-        return results
+        """Batch match a list of song names for an artist.
+
+        Songs are matched concurrently in a bounded thread pool; the returned
+        list preserves the input order.
+        """
+        if not song_names:
+            return []
+        worker = partial(self.match_song, artist_name=artist_name)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+            return list(pool.map(worker, song_names))

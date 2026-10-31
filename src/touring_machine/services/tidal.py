@@ -1,10 +1,12 @@
 """Tidal streaming service implementation using tidalapi."""
 
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 import tidalapi
+from tidalapi.exceptions import TooManyRequests
 
 from touring_machine.config import get_default_tidal_session_path
 from touring_machine.exceptions import (
@@ -19,6 +21,9 @@ from touring_machine.services.base import StreamingService
 logger = logging.getLogger(__name__)
 
 _FOLDER_PAGE_SIZE = 50
+
+# How many times to retry a rate-limited (HTTP 429) search.
+MAX_SEARCH_RETRIES = 3
 
 
 class TidalService(StreamingService):
@@ -39,6 +44,7 @@ class TidalService(StreamingService):
         self.session = session or tidalapi.Session()
         self._session_loaded = False
         self._authenticated = False
+        self._search_cache: dict[str, list[Track]] = {}
 
     @property
     def name(self) -> str:
@@ -238,30 +244,61 @@ class TidalService(StreamingService):
         except Exception as exc:
             raise StreamingServiceError(f"Failed to add tracks to Tidal playlist: {exc}") from exc
 
+    def _search_with_retry(self, search_str: str) -> dict:
+        """Run a catalog search, retrying rate-limited (HTTP 429) responses.
+
+        Tidal sometimes omits the Retry-After header on 429s, so fall back to
+        exponential backoff when it is missing or non-positive.
+        """
+        last_exc: TooManyRequests | None = None
+        for attempt in range(MAX_SEARCH_RETRIES + 1):
+            try:
+                return self.session.search(query=search_str, models=[tidalapi.Track], limit=10)
+            except TooManyRequests as exc:
+                last_exc = exc
+                if attempt >= MAX_SEARCH_RETRIES:
+                    break
+                delay = exc.retry_after if exc.retry_after > 0 else min(2.0**attempt, 30.0)
+                logger.warning(
+                    "Tidal rate limited (HTTP 429), retrying in %.1fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    MAX_SEARCH_RETRIES,
+                )
+                time.sleep(delay)
+            except Exception as exc:
+                raise StreamingServiceError(f"Tidal search failed: {exc}") from exc
+        raise StreamingServiceError(f"Tidal search failed: {last_exc}") from last_exc
+
     def search_track(self, query: str, artist: str | None = None) -> list[Track]:
-        """Search Tidal for tracks matching query and artist."""
+        """Search Tidal for tracks matching query and artist.
+
+        Results are memoized per query string for the lifetime of this instance
+        (search responses are also CDN-cached by Tidal for 5 minutes).
+        """
         if not self.is_authenticated():
             raise AuthenticationError("Tidal is not authenticated.")
 
         search_str = f"{artist} - {query}" if artist else query
-        try:
-            results = self.session.search(query=search_str, models=[tidalapi.Track], limit=10)
-            tracks: list[Track] = []
-            # SearchResults is a TypedDict, so we access it like a dictionary
-            for item in results.get("tracks", []):
-                tracks.append(
-                    Track(
-                        id=str(item.id),
-                        title=item.name,
-                        artist=item.artist.name if item.artist else "",
-                        album=item.album.name if item.album else None,
-                        duration_seconds=getattr(item, "duration", None),
-                        url=f"https://tidal.com/browse/track/{item.id}",
-                    )
+        if search_str in self._search_cache:
+            return self._search_cache[search_str]
+
+        results = self._search_with_retry(search_str)
+        tracks: list[Track] = []
+        # SearchResults is a TypedDict, so we access it like a dictionary
+        for item in results.get("tracks", []):
+            tracks.append(
+                Track(
+                    id=str(item.id),
+                    title=item.name,
+                    artist=item.artist.name if item.artist else "",
+                    album=item.album.name if item.album else None,
+                    duration_seconds=getattr(item, "duration", None),
+                    url=f"https://tidal.com/browse/track/{item.id}",
                 )
-            return tracks
-        except Exception as exc:
-            raise StreamingServiceError(f"Tidal search failed: {exc}") from exc
+            )
+        self._search_cache[search_str] = tracks
+        return tracks
 
     def get_playlist(self, playlist_id: str) -> Playlist | None:
         """Retrieve playlist details from Tidal."""

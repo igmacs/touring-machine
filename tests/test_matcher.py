@@ -1,5 +1,7 @@
 """Unit tests for TrackMatcher."""
 
+import threading
+import time
 from unittest.mock import MagicMock
 
 from touring_machine.matcher import TrackMatcher, normalize_title
@@ -119,3 +121,36 @@ def test_match_songs_batch() -> None:
     assert results[0].track.id == "1"
     assert results[1].matched is True
     assert results[1].track.id == "2"
+
+
+def test_match_songs_runs_concurrently_and_preserves_order() -> None:
+    class FakeService:
+        def __init__(self) -> None:
+            self.current = 0
+            self.max_seen = 0
+            self.lock = threading.Lock()
+
+        def search_track(self, query: str, artist: str | None = None) -> list[Track]:
+            with self.lock:
+                self.current += 1
+                self.max_seen = max(self.max_seen, self.current)
+            time.sleep(0.05)
+            with self.lock:
+                self.current -= 1
+            return [Track(id="1", title=query, artist=artist or "")]
+
+    service = FakeService()
+    songs = [f"Song {i}" for i in range(10)]
+    matcher = TrackMatcher(service=service, max_workers=4)
+
+    results = matcher.match_songs(songs, "Artist")
+
+    assert [r.query_song for r in results] == songs  # order preserved
+    assert all(r.matched for r in results)
+    assert service.max_seen > 1  # searches actually overlapped
+    assert service.max_seen <= 4  # never above max_workers
+
+
+def test_match_songs_empty_input() -> None:
+    matcher = TrackMatcher(service=MagicMock())
+    assert matcher.match_songs([], "Artist") == []

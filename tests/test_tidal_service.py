@@ -4,8 +4,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tidalapi.exceptions import TooManyRequests
 
-from touring_machine.exceptions import AuthenticationError, PlaylistCreationError
+from touring_machine.exceptions import (
+    AuthenticationError,
+    PlaylistCreationError,
+    StreamingServiceError,
+)
 from touring_machine.models import Track
 from touring_machine.services.tidal import TidalService
 
@@ -79,6 +84,72 @@ def test_search_track_checks_auth_once_across_searches(tmp_path: Path) -> None:
 
     mock_session.check_login.assert_called_once()
     assert mock_session.search.call_count == 2
+
+
+def test_search_track_retries_on_429_with_backoff_when_no_retry_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr("touring_machine.services.tidal.time.sleep", slept.append)
+
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+    mock_session.search.side_effect = [
+        TooManyRequests("Too many requests", retry_after=-1),
+        {"tracks": []},
+    ]
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    assert service.search_track("Song A", "Artist") == []
+
+    assert mock_session.search.call_count == 2
+    assert slept == [1.0]  # retry_after missing -> exponential backoff
+
+
+def test_search_track_retry_honors_retry_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr("touring_machine.services.tidal.time.sleep", slept.append)
+
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+    mock_session.search.side_effect = [
+        TooManyRequests("Too many requests", retry_after=7),
+        {"tracks": []},
+    ]
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    assert service.search_track("Song A", "Artist") == []
+    assert slept == [7.0]
+
+
+def test_search_track_gives_up_after_max_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("touring_machine.services.tidal.time.sleep", lambda s: None)
+
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+    mock_session.search.side_effect = TooManyRequests("Too many requests", retry_after=-1)
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    with pytest.raises(StreamingServiceError, match="Tidal search failed"):
+        service.search_track("Song A", "Artist")
+
+    assert mock_session.search.call_count == 4  # 1 initial + 3 retries
+
+
+def test_search_track_memoizes_identical_queries(tmp_path: Path) -> None:
+    mock_session = MagicMock()
+    mock_session.check_login.return_value = True
+    mock_session.search.return_value = {"tracks": []}
+
+    service = TidalService(session_path=tmp_path / "session.json", session=mock_session)
+    service.search_track("Song A", "Artist")
+    service.search_track("Song A", "Artist")
+
+    assert mock_session.search.call_count == 1
 
 
 def test_authenticate_non_interactive_returns_false_when_unauthenticated(tmp_path: Path) -> None:
