@@ -79,6 +79,10 @@ class TidalService(StreamingService):
                     self.session.load_session_from_file(self.session_path)
                     if self.session.check_login():
                         self._authenticated = True
+                        # The access token may have been silently refreshed
+                        # while loading; persist it so the next run doesn't
+                        # have to refresh again.
+                        self._save_session_quietly()
                         return True
                 except Exception as e:
                     logger.debug("Failed to load session from file %s: %s", self.session_path, e)
@@ -130,6 +134,17 @@ class TidalService(StreamingService):
             self.session_path.chmod(0o600)
         except OSError:
             pass
+
+    def _save_session_quietly(self) -> None:
+        """Persist the in-memory session, ignoring failures.
+
+        A stale session file only costs an extra token refresh on the next
+        run; it must never turn a successful auth into a failed one.
+        """
+        try:
+            self._save_session()
+        except Exception as e:
+            logger.debug("Failed to persist Tidal session to %s: %s", self.session_path, e)
 
     def create_playlist(
         self, name: str, description: str = "", folder: str | None = None

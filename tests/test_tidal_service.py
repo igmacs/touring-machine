@@ -88,6 +88,34 @@ def test_search_track_checks_auth_once_across_searches(tmp_path: Path) -> None:
     assert mock_session.search.call_count == 2
 
 
+def test_is_authenticated_persists_session_after_loading_file(tmp_path: Path) -> None:
+    # After loading (and possibly silently refreshing the token), the fresh
+    # in-memory session must be written back so the next run starts valid.
+    session_file = tmp_path / "session.json"
+    session_file.write_text('{"token": "dummy"}')
+
+    mock_session = MagicMock()
+    mock_session.check_login.side_effect = [False, True]
+
+    service = TidalService(session_path=session_file, session=mock_session)
+    assert service.is_authenticated()
+
+    mock_session.load_session_from_file.assert_called_once_with(session_file)
+    mock_session.save_session_to_file.assert_called_once_with(session_file)
+
+
+def test_is_authenticated_save_failure_does_not_break_auth(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.json"
+    session_file.write_text('{"token": "dummy"}')
+
+    mock_session = MagicMock()
+    mock_session.check_login.side_effect = [False, True]
+    mock_session.save_session_to_file.side_effect = OSError("read-only filesystem")
+
+    service = TidalService(session_path=session_file, session=mock_session)
+    assert service.is_authenticated()
+
+
 def test_is_authenticated_is_thread_safe_under_concurrent_calls(tmp_path: Path) -> None:
     # Regression test: match_songs() calls is_authenticated() from a thread
     # pool; concurrent callers must all see the loaded session, not a mix of
